@@ -5,7 +5,7 @@ council.py — 飞书议事厅编排器
 根据议题自动从专家 skills 中选角，分配到飞书 bot，驱动多角色辩论。
 
 Usage:
-    python3 council.py start --topic "如何切入AI积木玩具"
+    python3 council.py start --topic "如何切入AI玩具赛道"
     python3 council.py start --topic "API设计评审" --experts knudstorp,sofman,resnick
     python3 council.py history
 """
@@ -110,29 +110,112 @@ def load_expert_prompt(skill_path):
     return text
 
 
+def _distill_expert(person_name, topic, rules):
+    """Quick-distill a new expert using LLM. Returns skill_id or None."""
+    skill_id = person_name.lower().replace(" ", "-").replace("·", "")
+    # Convert Chinese names to pinyin-like id
+    if any('\u4e00' <= c <= '\u9fff' for c in skill_id):
+        # Use LLM to generate a reasonable English id
+        try:
+            raw = call_llm("输出一个英文ID，不要其他文字。",
+                           f"把这个人名转成英文小写ID（用连字符分隔）：{person_name}", rules)
+            skill_id = raw.strip().lower().replace(" ", "-")[:30]
+        except Exception:
+            skill_id = f"expert-{hash(person_name) % 10000}"
+
+    experts_dir = Path(os.path.expanduser("~/.claude/skills"))
+    skill_dir = experts_dir / f"{skill_id}-perspective"
+
+    # Already exists?
+    if (skill_dir / "SKILL.md").exists():
+        sys.stderr.write(f"  [{person_name}] already exists at {skill_dir}\n")
+        return skill_id
+
+    sys.stderr.write(f"  [{person_name}] distilling...\n")
+
+    # Quick distill: generate a condensed expert SKILL.md via LLM
+    distill_prompt = (
+        f"为以下人物生成一个思维操作系统 Skill，用于在圆桌讨论中扮演此人。\n\n"
+        f"人物：{person_name}\n"
+        f"讨论议题背景：{topic}\n\n"
+        f"请生成完整的 SKILL.md，包含：\n"
+        f"1. YAML frontmatter（name, description, triggers）\n"
+        f"2. 身份卡（一段话介绍此人是谁）\n"
+        f"3. 3-5个核心心智模型（每个：一句话 + 证据 + 应用 + 局限）\n"
+        f"4. 3-5条决策启发式\n"
+        f"5. 表达DNA（句式、词汇、节奏、幽默、确定性）\n"
+        f"6. 角色扮演规则：用「我」说话，直接以此人身份回应\n\n"
+        f"基于你对此人的知识生成，不需要搜索。输出完整的 Markdown 文件内容。"
+    )
+
+    try:
+        skill_content = call_llm(
+            "你是女娲，擅长提炼人物的思维框架并生成可运行的 Skill。",
+            distill_prompt, rules)
+
+        if not skill_content or len(skill_content) < 200:
+            sys.stderr.write(f"  [{person_name}] distill output too short, skipping\n")
+            return None
+
+        # Write skill
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+        sys.stderr.write(f"  [{person_name}] distilled → {skill_dir}\n")
+        return skill_id
+
+    except Exception as e:
+        sys.stderr.write(f"  [{person_name}] distill failed: {e}\n")
+        return None
+
+
 def auto_cast(topic, experts, num_seats, rules):
-    """Use LLM to pick the best experts for this topic."""
+    """Smart casting: recommend ideal experts, distill missing ones."""
     expert_list = "\n".join(
         f"- {eid}: {e['name']} — {e['description'][:80]}"
         for eid, e in experts.items()
     )
     prompt = (
         f"议题：{topic}\n\n"
-        f"可用专家（共{len(experts)}位）：\n{expert_list}\n\n"
-        f"请选择最适合讨论这个议题的 {num_seats} 位专家。\n"
-        f"一个席位可以融合1-2位专家的视角（如果他们的专长互补）。\n\n"
+        f"已有高人（共{len(experts)}位）：\n{expert_list}\n\n"
+        f"请为这个议题推荐最理想的 {num_seats} 位高人。\n"
+        f"规则：\n"
+        f"- 优先从已有高人中选择\n"
+        f"- 如果已有高人不够覆盖议题的关键视角，可以推荐新高人（真实存在的行业专家）\n"
+        f"- 一个席位可以融合1-2位高人的视角\n"
+        f"- 新高人用 new:人名 格式标记\n\n"
         f"严格输出JSON数组，每个元素：\n"
-        f'{{"seat": 1, "expert_ids": ["id1"], "display_name": "显示名", "role": "一句话角色描述"}}\n\n'
+        f'{{"seat": 1, "expert_ids": ["id1"], "display_name": "显示名", "role": "一句话角色描述", "is_new": false}}\n'
+        f'{{"seat": 2, "expert_ids": ["new:张小龙"], "display_name": "张小龙", "role": "微信之父，产品极简主义", "is_new": true}}\n\n'
         f"只输出JSON，不要其他文字。"
     )
     sys.stderr.write("[council] Auto-casting experts...\n")
     try:
-        raw = call_llm("你是一位议事厅选角导演。根据议题选择最合适的专家组合。", prompt, rules)
-        # Extract JSON from response
+        raw = call_llm("你是一位议事厅选角导演。根据议题选择最合适的高人组合，不限于已有名单。", prompt, rules)
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
         seats = json.loads(raw)
+
+        # Distill any new experts
+        needs_distill = [s for s in seats if s.get("is_new")]
+        if needs_distill:
+            sys.stderr.write(f"[council] {len(needs_distill)} new expert(s) need distilling\n")
+            for seat in needs_distill:
+                for eid in list(seat.get("expert_ids", [])):
+                    if eid.startswith("new:"):
+                        person_name = eid[4:]
+                        skill_id = _distill_expert(person_name, topic, rules)
+                        if skill_id:
+                            idx = seat["expert_ids"].index(eid)
+                            seat["expert_ids"][idx] = skill_id
+                            seat["is_new"] = False
+                            # Refresh experts dict
+                            experts_dir = rules.get("_experts_dir", "~/.claude/skills")
+                            new_experts = discover_experts(experts_dir)
+                            experts.update(new_experts)
+                        else:
+                            seat["expert_ids"].remove(eid)
+
         return seats
     except Exception as e:
         print(f"WARN: Auto-cast failed ({e}), using first {num_seats} experts", file=sys.stderr)
@@ -395,7 +478,7 @@ REALTIME_SUFFIX = (
     "- 只在你有独特视角、不同意见或重要追问时才回应\n"
     "- 如果这条消息跟你的专业无关或你没有新观点，只回复 [SKIP]\n"
     "- 回应要有深度：指出具体哪位专家的哪个观点你同意/反对，并说明为什么\n"
-    "- 鼓励追问：\"Knudstorp说的约束促进创造力，但在AI积木场景下约束边界在哪？\"\n"
+    "- 鼓励追问：\"你说的低成本策略，但在AI玩具场景下成本结构到底是什么？\"\n"
     "- 鼓励反驳：直接指出其他专家观点的盲区或矛盾\n"
     "- 回复 200 字以内，不要做自我介绍\n"
 )
