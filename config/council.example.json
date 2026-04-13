@@ -1,0 +1,38 @@
+{
+  "group_chat_id": "oc_your_group_chat_id",
+  "bots": [
+    {
+      "id": "bot-1",
+      "name": "Architect",
+      "avatar_color": "blue",
+      "feishu": { "app_id": "cli_xxx", "app_secret": "your_app_secret" }
+    },
+    {
+      "id": "bot-2",
+      "name": "Builder",
+      "avatar_color": "green",
+      "feishu": { "app_id": "cli_yyy", "app_secret": "your_app_secret" }
+    },
+    {
+      "id": "bot-3",
+      "name": "Pirate",
+      "avatar_color": "red",
+      "feishu": { "app_id": "cli_zzz", "app_secret": "your_app_secret" }
+    },
+    {
+      "id": "bot-4",
+      "name": "Host",
+      "avatar_color": "orange",
+      "feishu": {}
+    }
+  ],
+  "experts_dir": "~/.claude/skills",
+  "rules": {
+    "max_rounds": 3,
+    "max_consecutive_no_new_points": 2,
+    "cooldown_sec": 3,
+    "llm_model": "claude-opus-4-6",
+    "llm_api_key_env": "ANTHROPIC_API_KEY",
+    "summary_at_end": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "2.0",
+  "config": { "wide_screen_mode": true },
+  "header": {
+    "template": "{{avatar_color}}",
+    "title": { "tag": "plain_text", "content": "{{agent_name}} · {{agent_role}}" },
+    "subtitle": { "tag": "plain_text", "content": "第 {{round}} 轮" }
+  },
+  "body": {
+    "elements": [
+      { "tag": "markdown", "content": "{{response}}" }
+    ]
+  }
+}

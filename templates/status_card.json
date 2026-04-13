@@ -1,0 +1,14 @@
+{
+  "schema": "2.0",
+  "config": { "wide_screen_mode": true },
+  "header": {
+    "template": "{{color}}",
+    "title": { "tag": "plain_text", "content": "{{title}}" },
+    "subtitle": { "tag": "plain_text", "content": "{{subtitle}}" }
+  },
+  "body": {
+    "elements": [
+      { "tag": "markdown", "content": "{{content}}" }
+    ]
+  }
+}
